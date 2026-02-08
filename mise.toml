@@ -1,0 +1,98 @@
+[vars]
+module_id = "daggerheart-quickstart"
+module_files = "module.json packs/ assets/ scenes/ README.md"
+base_url = "https://github.com/Fmerrick/{{ vars.module_id }}"
+foundry_packs = "pack-1"
+
+[tools]
+"node" = "latest"
+"npm:nushell" = "latest"
+"npm:@foundryvtt/foundryvtt-cli" = "latest"
+
+[tasks.build]
+description = "Build the module"
+usage = 'flag "--version <version>" help="Module version"'
+run = [
+  'env usage_version=${usage_version} mise run build:version',
+  { tasks = [ "build:zip" ] },
+]
+
+[tasks."build:dist"]
+description = "Creates dist folder"
+outputs = [ "dist", "dist/release" ]
+run = "mkdir -p ./dist/release"
+
+[tasks."build:version"]
+description = "Update variables in module.json"
+depends = [ "build:dist" ]
+usage = 'flag "--version <version>" help="Module version"'
+run = '''
+#!/usr/bin/env nu
+open module.json
+| update url "{{ vars.base_url }}"
+| update version ($env.usage_version? | default (date now | format date "%Y%m%d"))
+| save -f module.json
+if "usage_version" in $env {
+  open module.json
+  | update download $"{{ vars.base_url }}/releases/download/($env.usage_version)/{{ vars.module_id }}.zip"
+  | update manifest "{{ vars.base_url }}/releases/latest/download/module.json"
+  | reject flags
+  | save -f module.json
+}
+'''
+
+[tasks."build:zip"]
+description = "Zip module files"
+depends = [ "build:dist", "foundry:pack" ]
+sources = [ "{{ vars.module_files }}" ]
+outputs = [ "dist/release/{{ vars.module_id }}.zip" ]
+run = """
+#!/usr/bin/env bash
+cp module.json ./dist/release/
+zip -r ./dist/release/{{ vars.module_id }}.zip {{ vars.module_files }}
+"""
+
+[tasks.clean]
+description = "Cleans up build files"
+run = "rm -rf \"dist\" \"packs\""
+
+[tasks."foundry:pack"]
+description = "Packs compendiums for Foundry VTT"
+alias = "pack"
+sources = [ "compendiums/**" ]
+outputs = [ "packs/**" ]
+run = """
+#!/usr/bin/env nu
+[{{ vars.foundry_packs }}]
+| each { 
+  if ($"compendiums/($in)" | path exists) {
+    fvtt package pack -r --in $"compendiums/($in)" --out packs/ -n $in;
+  }
+}
+"""
+
+[tasks."foundry:unpack"]
+description = "Unpacks compendiums from Foundry VTT"
+alias = "unpack"
+sources = [ "packs/**" ]
+outputs = [ "compendiums/**" ]
+run = """
+#!/usr/bin/env nu
+[{{ vars.foundry_packs }}]
+| each { 
+  fvtt package unpack --folders --in packs/ --out $"compendiums/($in)" -n $in;
+}
+"""
+
+[tasks.gitignore]
+description = "Sets up the gitignore file"
+outputs = [".gitignore"]
+run = """
+#!/usr/bin/env nu
+if ( ".gitignore" | path exists) {
+  open .gitignore | split row "\n"
+} else { [] }
+| append ["/dist/**" "/packs/**"]
+| uniq
+| save -f .gitignore
+"""
